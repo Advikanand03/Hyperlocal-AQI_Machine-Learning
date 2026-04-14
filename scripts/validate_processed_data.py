@@ -3,42 +3,47 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 
 def setup_logging():
     """Configure logging for clear validation output."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     return logging.getLogger(__name__)
 
 
 logger = setup_logging()
 
 
+def get_project_paths(base_path: Path) -> dict[str, Path]:
+    """Return all file paths used by the validation script."""
+    return {
+        "raw": base_path / "data" / "raw" / "bangalore_caaqms" / "bangalore_caaqms_2025_combined.csv",
+        "metadata": base_path / "data" / "metadata" / "bangalore_stations.csv",
+        "processed": base_path / "data" / "processed" / "bangalore_processed.csv",
+    }
+
+
 def load_datasets(base_path: Path):
-    """Load both raw and processed datasets."""
-    raw_path = base_path / "data" / "raw" / "bangalore_caaqms" / "bangalore_caaqms_2025_combined.csv"
-    processed_path = base_path / "data" / "processed" / "bangalore_processed.csv"
+    """Load the raw and processed Bengaluru datasets for validation."""
+    paths = get_project_paths(base_path)
 
-    logger.info("Loading datasets...")
-    if not raw_path.exists():
-        raise FileNotFoundError(f"Raw data not found: {raw_path}")
-    if not processed_path.exists():
-        raise FileNotFoundError(f"Processed data not found: {processed_path}")
+    if not paths["raw"].exists():
+        raise FileNotFoundError(f"Raw data not found: {paths['raw']}")
+    if not paths["processed"].exists():
+        raise FileNotFoundError(
+            f"Processed data not found: {paths['processed']}. "
+            "Run scripts/run_pipeline.py first."
+        )
 
-    raw_df = pd.read_csv(raw_path)
-    processed_df = pd.read_csv(processed_path)
-
-    # Ensure timestamp is parsed
+    raw_df = pd.read_csv(paths["raw"])
+    processed_df = pd.read_csv(paths["processed"])
     processed_df["timestamp"] = pd.to_datetime(processed_df["timestamp"])
 
     logger.info(f"✓ Raw dataset loaded: {raw_df.shape}")
-    logger.info(f"✓ Processed dataset loaded: {processed_df.shape}\n")
+    logger.info(f"✓ Processed dataset loaded: {processed_df.shape}")
+    logger.info("")
 
     return raw_df, processed_df
 
@@ -62,7 +67,7 @@ def validate_row_count(raw_df: pd.DataFrame, processed_df: pd.DataFrame):
 
 
 def validate_station_coverage(raw_df: pd.DataFrame, processed_df: pd.DataFrame):
-    """Compare station coverage."""
+    """Compare station coverage between full raw and final processed datasets."""
     logger.info("=" * 70)
     logger.info("STATION COVERAGE")
     logger.info("=" * 70)
@@ -74,11 +79,10 @@ def validate_station_coverage(raw_df: pd.DataFrame, processed_df: pd.DataFrame):
     logger.info(f"Processed dataset stations: {processed_stations}")
     logger.info("")
 
-    # Per-station row counts
     logger.info("Per-station row counts (processed):")
     station_counts = processed_df.groupby("station").size().sort_values(ascending=False)
     for station, count in station_counts.items():
-        logger.info(f"  {station:30s} {count:6,} rows")
+        logger.info(f"  {station:35s} {count:6,} rows")
     logger.info("")
 
 
@@ -160,7 +164,7 @@ def validate_hourly_coverage(processed_df: pd.DataFrame):
     logger.info("Rows per hour (0-23):")
     for hour in range(24):
         count = hourly_counts.get(hour, 0)
-        bar = "█" * (count // 100) if count > 0 else ""
+        bar = "#" * (count // 100) if count > 0 else ""
         logger.info(f"  Hour {hour:2d}: {count:6,} rows {bar}")
 
     logger.info("")
@@ -180,7 +184,7 @@ def validate_monthly_coverage(processed_df: pd.DataFrame):
     month_names = {
         1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
         5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
-        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
     }
 
     monthly_counts = processed_df.groupby("month").size()
@@ -189,7 +193,7 @@ def validate_monthly_coverage(processed_df: pd.DataFrame):
     for month in range(1, 13):
         count = monthly_counts.get(month, 0)
         month_name = month_names.get(month, f"Month {month}")
-        bar = "█" * (count // 500) if count > 0 else ""
+        bar = "#" * (count // 500) if count > 0 else ""
         logger.info(f"  {month_name:3s}: {count:6,} rows {bar}")
 
     logger.info("")
@@ -198,7 +202,7 @@ def validate_monthly_coverage(processed_df: pd.DataFrame):
 def validate_completeness_per_station(processed_df: pd.DataFrame):
     """Check data completeness per station and hour."""
     logger.info("=" * 70)
-    logger.info("COMPLETENESS ANALYSIS (Station × Hour Grid)")
+    logger.info("COMPLETENESS ANALYSIS (Station x Hour Grid)")
     logger.info("=" * 70)
 
     if "hour" not in processed_df.columns:
@@ -206,15 +210,14 @@ def validate_completeness_per_station(processed_df: pd.DataFrame):
         logger.info("")
         return
 
-    # Create a pivot table: stations × hours
     completeness = processed_df.groupby(["station", "hour"]).size().unstack(fill_value=0)
 
-    logger.info(f"Station coverage by hour (24 hours per station expected):")
+    logger.info("Station coverage by hour (24 hours per station expected):")
     completeness_pct = (completeness > 0).sum(axis=1) / 24 * 100
 
     for station in sorted(completeness_pct.index):
         pct = completeness_pct[station]
-        logger.info(f"  {station:30s} {pct:5.1f}% hourly coverage")
+        logger.info(f"  {station:35s} {pct:5.1f}% hourly coverage")
 
     logger.info("")
 
@@ -238,8 +241,8 @@ def main():
         logger.info("VALIDATION COMPLETE")
         logger.info("=" * 70)
 
-    except Exception as e:
-        logger.error(f"Validation failed: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error(f"Validation failed: {exc}", exc_info=True)
         sys.exit(1)
 
 
